@@ -6,27 +6,26 @@
 #include <avr/sleep.h>
 
 // ===== Neue Pinbelegung =====
-// Buttons auf PD5..PD7
-#define BUTTON1 (1 << PD5) // Minute
-#define BUTTON2 (1 << PD6) // Stunde
-#define BUTTON3 (1 << PD7) // Helligkeit
+#define BUTTON1 (1 << PD5)
+#define BUTTON2 (1 << PD6)
+#define BUTTON3 (1 << PD7)
 
-// Hour LEDs (PD4..PD0)
 #define LED_H_1 (1 << PD4)
 #define LED_H_2 (1 << PD3)
 #define LED_H_3 (1 << PD2)
 #define LED_H_4 (1 << PD1)
 #define LED_H_5 (1 << PD0)
 
-// Minute LEDs PC0..PC5
 #define LED_M_MASK 0x3F
+
+// MESS-PIN DEFINITION
+#define SCOPE_PIN (1 << PB0)
 
 volatile uint8_t seconds = 0;
 volatile uint8_t minutes = 20;
 volatile uint8_t hours = 5;
 
 volatile uint8_t brightness_level = 0;
-
 const uint8_t brightness_levels[] = {255, 248, 156, 0};
 
 void setup_timer2() {
@@ -45,24 +44,19 @@ void setup_timer1() {
 }
 
 void setup_ports() {
-    // Hour LEDs PD0..PD4
     DDRD |= (LED_H_1 | LED_H_2 | LED_H_3 | LED_H_4 | LED_H_5);
-
-    // Minute LEDs PC0–PC5
     DDRC |= LED_M_MASK;
-
-    // PWM on PB1 + PB2
     DDRB |= (1 << PB1) | (1 << PB2);
+    
+    // ÄNDERUNG: PB0 als Ausgang für das Oszilloskop
+    DDRB |= SCOPE_PIN; 
 
-    // Disable unused peripherals
     PRR |= (1 << PRADC) | (1 << PRUSART0) | (1 << PRSPI) |
            (1 << PRTIM0) | (1 << PRTWI);
 
-    // Buttons PD5, PD6, PD7 als Input mit Pullups
     DDRD &= ~(BUTTON1 | BUTTON2 | BUTTON3);
     PORTD |= (BUTTON1 | BUTTON2 | BUTTON3);
 
-    // LEDs off
     PORTD &= ~(LED_H_1 | LED_H_2 | LED_H_3 | LED_H_4 | LED_H_5);
     PORTC &= ~LED_M_MASK;
 
@@ -71,18 +65,12 @@ void setup_ports() {
 }
 
 void setup_interrupts() {
-    // Benutze Pin-Change-Interrupts für PD5..PD7 (PCINT21..PCINT23)
-    PCICR |= (1 << PCIE2); // enable PCINT2 group (PCINT23..16)
+    PCICR |= (1 << PCIE2);
     PCMSK2 |= (1 << PCINT21) | (1 << PCINT22) | (1 << PCINT23);
-
-    // Keine INT0/INT1 mehr (sie wären auf PD2/PD3)
-    // (EIMSK/ EICRA nicht gesetzt)
 }
 
 void update_display() {
-    // Hours (0..23 -> 5 LEDs)
     PORTD &= ~(LED_H_1 | LED_H_2 | LED_H_3 | LED_H_4 | LED_H_5);
-
     if (hours & (1 << 0)) PORTD |= LED_H_1;
     if (hours & (1 << 1)) PORTD |= LED_H_2;
     if (hours & (1 << 2)) PORTD |= LED_H_3;
@@ -94,8 +82,12 @@ void update_display() {
 }
 
 ISR(TIMER2_OVF_vect) {
-    seconds++;
+    // ÄNDERUNG: PB0 toggeln (Umschalten 0 <-> 1)
+    PINB |= SCOPE_PIN; 
+    _delay_us(100);      // 100 Mikrosekunden warten
+    PORTB &= ~SCOPE_PIN; // Pin wieder auf LOW
 
+    seconds++;
     if (seconds >= 60) {
         seconds = 0;
         minutes++;
@@ -108,16 +100,12 @@ ISR(TIMER2_OVF_vect) {
     update_display();
 }
 
-// PCINT2 covers PD0..PD7 via PCINT16..PCINT23
 ISR(PCINT2_vect) {
-    static uint8_t prev = 0xFF; // previous PIND bits
+    static uint8_t prev = 0xFF;
     uint8_t curr = PIND;
 
-    // Detect falling edge (pressed) for each button (active LOW)
-    // BUTTON1: minute
     if ( (prev & BUTTON1) && !(curr & BUTTON1) ) {
-        // pressed
-        _delay_ms(5); // debounce
+        _delay_ms(5);
         if (!(PIND & BUTTON1)) {
             minutes++;
             seconds = 0;
@@ -130,7 +118,6 @@ ISR(PCINT2_vect) {
         }
     }
 
-    // BUTTON2: hour
     if ( (prev & BUTTON2) && !(curr & BUTTON2) ) {
         _delay_ms(5);
         if (!(PIND & BUTTON2)) {
@@ -140,7 +127,6 @@ ISR(PCINT2_vect) {
         }
     }
 
-    // BUTTON3: brightness
     if ( (prev & BUTTON3) && !(curr & BUTTON3) ) {
         _delay_ms(5);
         if (!(PIND & BUTTON3)) {
@@ -149,7 +135,6 @@ ISR(PCINT2_vect) {
             OCR1B = brightness_levels[brightness_level];
         }
     }
-
     prev = curr;
 }
 
